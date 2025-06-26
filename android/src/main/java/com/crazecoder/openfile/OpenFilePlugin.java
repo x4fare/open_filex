@@ -128,6 +128,12 @@ public class OpenFilePlugin implements MethodCallHandler
                 typeString = getFileType(filePath);
             }
             if (pathRequiresPermission()) {
+                // Para arquivos no diretório do app, não precisa de permissões
+                if (isAppOwnedFile()) {
+                    startActivity();
+                    return;
+                }
+                
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                     if(!isFileAvailable()){
                         return;
@@ -137,16 +143,16 @@ public class OpenFilePlugin implements MethodCallHandler
                         return;
                     }
                 }
-                if (canStartActivityWithPermission()) {
+                
+                // Para PDFs e documentos, tenta abrir sem permissão primeiro
+                if (isPdfFile() || isDocumentFile()) {
                     startActivity();
                 } else if (Build.VERSION.SDK_INT < 33) {
-                    requestPermission(Manifest.permission.READ_EXTERNAL_STORAGE);
-                } else if (typeString.startsWith("image")) {
-                    requestPermission(Manifest.permission.READ_MEDIA_IMAGES);
-                } else if (typeString.startsWith("video")) {
-                    requestPermission(Manifest.permission.READ_MEDIA_VIDEO);
-                } else if (typeString.startsWith("audio")) {
-                    requestPermission(Manifest.permission.READ_MEDIA_AUDIO);
+                    // Android 12 e inferior - tenta sem permissão primeiro
+                    startActivity();
+                } else {
+                    // Android 13+ - tenta sem permissão
+                    startActivity();
                 }
             } else {
                 startActivity();
@@ -158,11 +164,13 @@ public class OpenFilePlugin implements MethodCallHandler
     }
 
     private boolean canStartActivityWithPermission() {
-        return (Build.VERSION.SDK_INT < 33 && hasPermission(Manifest.permission.READ_EXTERNAL_STORAGE)) ||
-                (Build.VERSION.SDK_INT >= 33 && typeString.startsWith("image") && hasPermission(Manifest.permission.READ_MEDIA_IMAGES)) ||
-                (Build.VERSION.SDK_INT >= 33 && typeString.startsWith("video") && hasPermission(Manifest.permission.READ_MEDIA_VIDEO)) ||
-                (Build.VERSION.SDK_INT >= 33 && typeString.startsWith("audio") && hasPermission(Manifest.permission.READ_MEDIA_AUDIO)) ||
-                (Build.VERSION.SDK_INT >= 33 && !(typeString.startsWith("image") || typeString.startsWith("video") || typeString.startsWith("audio")));
+        // Se é arquivo do próprio app, sempre pode abrir
+        if (isAppOwnedFile()) {
+            return true;
+        }
+        
+        // Para outros casos, tenta abrir sem permissão (funciona na maioria dos casos)
+        return true;
     }
 
     private boolean isMediaStorePath(){
@@ -421,5 +429,47 @@ public class OpenFilePlugin implements MethodCallHandler
             result.success(JsonUtil.toJson(map));
             isResultSubmitted = true;
         }
+    }
+
+    private boolean isPdfFile() {
+        return typeString != null && typeString.equals("application/pdf");
+    }
+
+    private boolean isDocumentFile() {
+        return typeString != null && (
+            typeString.equals("application/pdf") ||
+            typeString.equals("application/msword") ||
+            typeString.equals("application/vnd.openxmlformats-officedocument.wordprocessingml.document") ||
+            typeString.equals("application/vnd.ms-excel") ||
+            typeString.equals("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") ||
+            typeString.equals("application/vnd.ms-powerpoint") ||
+            typeString.equals("application/vnd.openxmlformats-officedocument.presentationml.presentation") ||
+            typeString.equals("text/plain")
+        );
+    }
+
+    private boolean isAppOwnedFile() {
+        if (filePath == null) return false;
+        
+        try {
+            // Verifica se o arquivo está no diretório do app ou cache
+            String appDirCanonicalPath = new File(context.getApplicationInfo().dataDir).getCanonicalPath();
+            String extDirCanonicalPath = context.getExternalFilesDir(null).getCanonicalPath();
+            String cacheDirCanonicalPath = context.getCacheDir().getCanonicalPath();
+            String extCacheDirCanonicalPath = context.getExternalCacheDir().getCanonicalPath();
+            String fileCanonicalPath = new File(filePath).getCanonicalPath();
+            
+            return fileCanonicalPath.startsWith(appDirCanonicalPath) ||
+                   fileCanonicalPath.startsWith(extDirCanonicalPath) ||
+                   fileCanonicalPath.startsWith(cacheDirCanonicalPath) ||
+                   fileCanonicalPath.startsWith(extCacheDirCanonicalPath);
+        } catch (IOException e) {
+            e.printStackTrace();
+            return false;
+        }
+    }
+
+    private boolean isDownloadsFolder() {
+        return filePath != null && filePath.contains("/Download/");
     }
 }
